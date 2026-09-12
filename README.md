@@ -1,36 +1,121 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AURUM CRM Analytics
 
-## Getting Started
+Internal CRM dashboard for the AURUM Live platform: infra cost, platform profit and
+creator health, in one place for the platform owner.
 
-First, run the development server:
+Next.js 16 (App Router) · TypeScript · Tailwind v4 · Radix primitives · Recharts ·
+Supabase SSR.
+
+## What it shows
+
+| Route | Purpose |
+| --- | --- |
+| `/` | Overview — revenue, infra cost, net profit, at-risk creators, 30-day trend, leaderboard |
+| `/creators` | Searchable, filterable creator list with profit and margin per creator |
+| `/creators/[creatorId]` | One creator: tier progress, cost split, stored clips, recent sessions |
+| `/revenue` | Star markup, purchase slots, and the per-creator tier commission table |
+| `/purchases` | Completed star orders ledger |
+| `/alerts` | Alert rules (toggle, channels, create) and alert history |
+| `/reports` | Weekly revenue vs cost, cost mix, tier distribution, month-on-month |
+| `/storage` | Stored clips, cost by tier, largest clips, stale content |
+| `/settings` | Analytics exclusion list and account info |
+| `/help` | How every number is calculated |
+
+## Access control
+
+Only `profiles.role = 'super_admin'` gets past `/login`.
+
+Three layers, deliberately:
+
+1. **Middleware** (`src/middleware.ts`) — redirects unauthenticated or non-admin
+   traffic. This is a UX redirect, not a security boundary.
+2. **Dashboard layout** — re-verifies the session server-side before rendering any
+   financial figure.
+3. **Server actions** — `requireSuperAdmin()` proves the caller's role against their
+   own session cookie before any write. This matters because mutations run through the
+   service-role client, which bypasses RLS entirely.
+
+Every analytics RPC is `REVOKE`d from `anon` and `authenticated` and granted to
+`service_role` only, so the dashboard is the sole path to these figures.
+
+## Environment variables
+
+Copy `.env.example` to `.env.local` and fill in:
+
+| Variable | Scope | Notes |
+| --- | --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | public | Project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | public | Used for the auth session only |
+| `SUPABASE_SERVICE_ROLE_KEY` | **server only** | Required — every RPC is service-role-gated |
+| `TELEGRAM_BOT_TOKEN` | server | Reserved for the alert-delivery follow-up |
+| `TELEGRAM_CHAT_ID` | server | Reserved for the alert-delivery follow-up |
+| `RESEND_API_KEY` | server | Reserved for the alert-delivery follow-up |
+
+`.env.local` is gitignored. Never commit the service-role key; set it in Vercel
+project settings for deployments.
+
+## Local development
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
+cp .env.example .env.local   # then fill in the keys
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Checks:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+pnpm typecheck   # tsc --noEmit
+pnpm lint        # eslint
+pnpm build       # production build
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Database
 
-## Learn More
+Migrations live in `supabase/migrations/` and are applied to project
+`hknvooaqgpufrbdxtzxf` (shared with `creator-livetech`).
 
-To learn more about Next.js, take a look at the following resources:
+New objects:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `creators.excluded_from_analytics` — the manual test-account exclusion flag
+- `alert_rules`, `alert_events` — RLS-locked to `super_admin`
+- `crm_tier_of` / `crm_tier_pct` / `crm_tier_next_threshold` / `crm_month_start` /
+  `crm_internal_star_thb` — shared helpers so tier and month maths are defined once
+- `get_creator_current_tier`, `get_platform_revenue_summary`,
+  `get_creator_cost_breakdown`, `get_star_purchase_slot_performance`,
+  `get_creator_leaderboard`, `get_daily_revenue_trend`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Every one of those RPCs filters `excluded_from_analytics = true` **inside the
+database**, so no caller — this app or any future one — can let test data into
+production metrics.
 
-## Deploy on Vercel
+Regenerate types after a schema change:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+pnpm dlx supabase gen types typescript --project-id hknvooaqgpufrbdxtzxf \
+  > src/lib/types/database.ts
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Conventions
+
+- Money is always THB, formatted with `Intl.NumberFormat('th-TH')` as `฿ 12,345`.
+- Timestamps are stored UTC and displayed in Bangkok time (ICT).
+- Server Components by default; `'use client'` only where interaction demands it.
+- Filter and sort state lives in the URL so any view is linkable and reloadable.
+
+## Deploy
+
+Vercel, git-linked, framework preset Next.js. Set all three Supabase variables on
+Production, Preview and Development. Custom domain `analytics.creatorlivetech.com`
+via a proxied Cloudflare CNAME to `cname.vercel-dns.com`.
+
+## Known follow-ups
+
+- Alert delivery: a scheduled `run_alert_rules` Edge Function to evaluate rules, write
+  `alert_events` and deliver via Telegram/email. Rules are stored and editable now, but
+  nothing evaluates them yet.
+- `src/middleware.ts` triggers a Next 16 deprecation warning in favour of the new
+  `proxy.ts` convention. It still works; migrate when convenient.
+- Playback cost cannot be split by day — `feed_posts.view_count` is a running total
+  with no history. The daily trend attributes it to each clip's publish date.
+- Desktop-first: no layout work below 768px.
