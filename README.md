@@ -48,12 +48,13 @@ Copy `.env.example` to `.env.local` and fill in:
 | `NEXT_PUBLIC_SUPABASE_URL` | public | Project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | public | Used for the auth session only |
 | `SUPABASE_SERVICE_ROLE_KEY` | **server only** | Required — every RPC is service-role-gated |
-| `TELEGRAM_BOT_TOKEN` | server | Reserved for the alert-delivery follow-up |
-| `TELEGRAM_CHAT_ID` | server | Reserved for the alert-delivery follow-up |
-| `RESEND_API_KEY` | server | Reserved for the alert-delivery follow-up |
 
 `.env.local` is gitignored. Never commit the service-role key; set it in Vercel
 project settings for deployments.
+
+Alert delivery needs **no Vercel variables**. The `alert-delivery-cron` Edge Function
+runs inside Supabase, so its Telegram and Resend credentials live in the Supabase vault
+and Edge Function secrets — see [`docs/alert-rules.md`](docs/alert-rules.md).
 
 ## Local development
 
@@ -82,9 +83,12 @@ New objects:
 - `alert_rules`, `alert_events` — RLS-locked to `super_admin`
 - `crm_tier_of` / `crm_tier_pct` / `crm_tier_next_threshold` / `crm_month_start` /
   `crm_internal_star_thb` — shared helpers so tier and month maths are defined once
+- `feed_post_view_daily` + `snapshot_feed_post_views` — nightly view-count history
+- `evaluate_alert_rules` / `run_alert_rules` — alert evaluation and the 15-minute
+  delivery cron; see [`docs/alert-rules.md`](docs/alert-rules.md)
 - `get_creator_current_tier`, `get_platform_revenue_summary`,
   `get_creator_cost_breakdown`, `get_star_purchase_slot_performance`,
-  `get_creator_leaderboard`, `get_daily_revenue_trend`
+  `get_creator_leaderboard`, `get_daily_revenue_trend`, `get_creator_view_trend`
 
 Every one of those RPCs filters `excluded_from_analytics = true` **inside the
 database**, so no caller — this app or any future one — can let test data into
@@ -112,9 +116,9 @@ via a proxied Cloudflare CNAME to `cname.vercel-dns.com`.
 
 ## Known follow-ups
 
-- Alert delivery: a scheduled `run_alert_rules` Edge Function to evaluate rules, write
-  `alert_events` and deliver via Telegram/email. Rules are stored and editable now, but
-  nothing evaluates them yet.
-- Playback cost cannot be split by day — `feed_posts.view_count` is a running total
-  with no history. The daily trend attributes it to each clip's publish date.
+- `feed_posts.file_size_bytes` is never populated, so every storage figure on the
+  dashboard is computed from 0 bytes and is understated. Upstream upload-pipeline gap.
+- Playback cost is still attributed to each clip's publish date. `feed_post_view_daily`
+  now snapshots real per-day movement, but the cost queries only switch over once ~30
+  days of history have accumulated — see `FOLLOWUPS.md`.
 - Desktop-first: no layout work below 768px.
