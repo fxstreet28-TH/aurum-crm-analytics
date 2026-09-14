@@ -1,152 +1,109 @@
 # Follow-ups
 
-Known gaps in the CRM analytics dashboard, in the order they are worth doing.
+All three items from the 2026-09-12 list are done. New gaps found while closing them are
+at the bottom.
 
 ---
 
-## 1. Alert delivery cron (Phase F.4)
+## 1. Alert delivery cron (Phase F.4) — **DONE** (2026-09-14)
 
-**Status:** rules are stored, editable and toggleable in `/alerts`. Nothing evaluates
-them. `alert_events` is empty and will stay empty, so the Overview at-risk panel and the
-sidebar alert badge are permanently quiet.
+Rules are evaluated every 15 minutes and delivered. `alert_events` is written, the
+Overview at-risk panel and the sidebar alert badge have something to read, and
+`triggered_count` / `last_triggered_at` move.
 
-This is the largest functional gap: the alerts UI currently promises monitoring the
-platform does not actually do.
+- `public.evaluate_alert_rules()` — evaluation stays in Postgres, where the
+  excluded-creator rule is enforced. Dispatches on `condition_json` keys, not rule name.
+- Edge Function `alert-delivery-cron` — delivery only: Telegram (Bot API), email
+  (Resend digest, one per run), `in_app` (the row is the delivery).
+- `public.run_alert_rules()` + `pg_cron` job `alert-delivery-cron` on `*/15 * * * *`,
+  the same pattern as `live-session-watchdog`.
+- De-duplication: partial unique index on `(rule_id, creator_id) where status = 'active'`,
+  so a creator over threshold fires once rather than 96 times a day.
+- `alert_delivery_mode` vault secret switches `dry_run` / `live` with no redeploy.
 
-### Approach
+Both open questions from the original write-up are settled:
 
-Keep evaluation in Postgres and delivery in an Edge Function. The exclusion rule is
-enforced inside the database today; evaluation should live in the same place so a future
-caller cannot bypass it.
+- **Storage quota** — `content_tier_limits.storage_quota_gb` already existed. No new
+  column; `storage_used_pct` is measured against the creator's tier quota.
+- **Unique senders** — dropped from the condition rather than faked. `live_sessions` has
+  no distinct-sender count and `unique_viewer_count` counts viewers, not chatters.
 
-**Step 1 — `public.evaluate_alert_rules()` RPC**
-
-For each `alert_rules` row where `enabled = true`, evaluate `condition_json` against the
-non-excluded creator population and insert one `alert_events` row per newly-breaching
-creator. Return the inserted rows so the caller can deliver them.
-
-The four seeded rules need these operators:
-
-| Rule | Condition keys | Data source |
-| --- | --- | --- |
-| High cost / low revenue | `cost_gt_thb`, `revenue_lt_thb` | `get_creator_leaderboard` |
-| Storage bloat | `storage_used_pct_gt`, `avg_views_per_clip_lt` | `feed_posts` aggregate + a quota to compare against |
-| Chat spam risk | `chat_msgs_per_day_gt`, `unique_senders_lt` | `live_sessions.chat_message_count`; **unique senders is not recorded** |
-| Tier drop warning | `days_left_lte`, `projected_stars_lt_current_tier` | `get_creator_current_tier` + month-to-date run rate |
-
-Two things to settle before writing it:
-
-- **Storage bloat needs a quota.** `storage_used_pct_gt: 80` is a percentage of something
-  that does not exist yet. Either add a per-creator storage quota column or redefine the
-  rule in absolute GB.
-- **Chat spam needs unique senders.** `live_sessions` has `chat_message_count` but no
-  distinct-sender count. Either add one or drop that half of the condition.
-
-**Step 2 — de-duplication.** Re-firing the same alert hourly would bury the real signal.
-Suppress a rule+creator pair while an `active` event already exists for it, and only
-re-fire after it is resolved or after a cooldown. Worth a partial unique index on
-`(rule_id, creator_id) where status = 'active'`.
-
-**Step 3 — `run_alert_rules` Edge Function**, scheduled hourly via `pg_cron` (already
-enabled on this project — see the `enable_pg_cron_and_schedule` migration). It calls the
-RPC, then fans out per `alert_rules.channels`:
-
-- `telegram` → Bot API `sendMessage`, reusing the livekit-sg-1 monitor bot
-- `email` → Resend
-- `in_app` → no delivery; the row in `alert_events` is the delivery
-
-**Step 4 — bump the counters.** `triggered_count` and `last_triggered_at` are shown on
-every rule card and are currently always `0` / null.
-
-### Secrets needed
-
-`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `RESEND_API_KEY` — placeholders are already in
-`.env.example`. These belong in Supabase Edge Function secrets, not Vercel, since the
-function runs in Supabase.
-
-**Effort:** ~1 day, most of it in the evaluation SQL.
-**Risk:** medium — a bug here spams Telegram. Ship with every rule disabled, enable one
-at a time, and dry-run by inserting `alert_events` without delivering for the first day.
+Full semantics in [`docs/alert-rules.md`](docs/alert-rules.md).
 
 ---
 
-## 2. `middleware.ts` → `proxy.ts`
+## 2. `middleware.ts` → `proxy.ts` — **DONE** (2026-09-14)
 
-**Status:** works, but every build prints a deprecation warning.
+Migrated with `npx @next/codemod@canary middleware-to-proxy .`. `src/middleware.ts` and
+`src/lib/supabase/middleware.ts` are gone; `src/proxy.ts` and `src/lib/supabase/proxy.ts`
+replace them. The build no longer prints the deprecation warning.
 
-Next 16 renamed the middleware file convention to `proxy.ts`. The current
-`src/middleware.ts` still runs, so this is housekeeping, not a defect — but it will
-become a hard break on a future major.
+Verified by running the Phase B auth smoke test against a production build before and
+after the move and diffing: all 11 guarded routes 307 to `/login?redirectTo=…`, `/login`
+200, `/favicon.ico` unguarded, query string preserved. Identical both sides.
 
-### Approach
-
-```bash
-npx @next/codemod@canary middleware-to-proxy .
-```
-
-Then verify by hand, because the auth guard is the one thing here that must not silently
-stop working:
-
-- Unauthenticated request to every dashboard route → `307` to `/login?redirectTo=…`
-- Non-`super_admin` session → `307` to `/login?error=unauthorized`
-- Signed-in `super_admin` → `200`
-- Auth cookies survive a redirect (`copyCookies` in the current implementation)
-
-The matcher excluding `_next/static`, images and fonts must survive the move — without it
-the role lookup runs a Supabase round trip per asset.
-
-**Effort:** ~30 minutes including verification.
-**Risk:** low, but it touches the auth path — do it on its own branch and check the four
-cases above before merging. Middleware is a UX redirect only; the dashboard layout and
-`requireSuperAdmin()` are the actual enforcement, so a regression here degrades UX rather
-than exposing data.
+Note: `proxy` runs on the **Node** runtime. Next 16 does not support edge for `proxy` and
+it cannot be configured.
 
 ---
 
-## 3. Daily `view_count` history table
+## 3. Daily `view_count` history table — **DONE** (2026-09-14)
 
-**Status:** `feed_posts.view_count` is a running total with no history. Three things are
-degraded by this.
+`feed_post_view_daily (post_id, day)` with a denormalised `creator_id` and a covering
+index on `(creator_id, day desc) include (views_delta, views_total)`, so 30- and 90-day
+series are index-only.
 
-1. **Playback cost cannot be split by day.** `get_daily_revenue_trend` attributes a
-   clip's entire playback cost to its publish date, back-loading cost onto one day
-   instead of spreading it across the days views actually happened.
-2. **Stale content is a weak proxy.** `/storage` defines stale as "published 90+ days ago
-   with zero recorded views". A clip watched heavily last year and ignored since is
-   invisible to that test — exactly the clip worth archiving.
-3. **No engagement trend.** No way to show whether a creator's back catalogue is growing
-   or decaying.
+`snapshot_feed_post_views(day)` runs nightly on `pg_cron` at 16:50 UTC (23:50
+Asia/Bangkok). Deltas are measured against the most recent earlier snapshot — a missed
+run is absorbed, not lost — and clamped at zero so a counter reset cannot book a negative
+day. `get_creator_view_trend(creator, days)` feeds a recharts trend on the creator
+detail page.
 
-### Approach
+As predicted, earlier history could not be backfilled; the baseline snapshot captures
+today's counter as the starting line with `views_delta = 0`.
 
-```sql
-create table public.feed_post_view_daily (
-  post_id     uuid not null references public.feed_posts(id) on delete cascade,
-  day         date not null,
-  views_total bigint not null,   -- snapshot of view_count at capture
-  views_delta bigint not null,   -- derived vs the previous snapshot
-  primary key (post_id, day)
-);
-```
+---
 
-Populate with a daily `pg_cron` job that snapshots every `video_status = 'ready'` post and
-computes `views_delta` against the previous row. Clamp negatives to zero — a `view_count`
-reset would otherwise produce a nonsense negative delta.
+## Newly discovered
 
-Then:
+### `feed_posts.file_size_bytes` is never populated
 
-- `get_daily_revenue_trend` uses `views_delta × 0.003` on the actual day
-- `/storage` redefines stale as "no `views_delta > 0` in 90 days", which is the real
-  question
-- The creator detail page can gain a per-clip sparkline
+The only stored clip has `file_size_bytes = NULL`. Every storage figure on the platform
+is therefore computed from 0 bytes: `/storage` totals, the storage slice of every cost
+breakdown, `storage_cost_thb` on the leaderboard, and the Storage bloat alert rule, which
+cannot trip a quota percentage against zero.
 
-**Backfill is not possible** — the history does not exist. The table starts accumulating
-the day it ships, so the sooner it lands the sooner cost attribution becomes honest.
-Until then keep the caveat visible on `/help`, which already documents this limitation.
+This is an upstream gap in the upload pipeline, not in this dashboard — the dashboard is
+reading the column correctly. Worth confirming whether Bunny Stream returns a size on
+upload completion and wiring it into `content-bunny-webhook`.
 
-**Effort:** ~half a day.
-**Risk:** low — additive, and nothing depends on it until the consuming queries switch
-over.
+**Until then, treat every storage cost on this dashboard as understated.**
+
+### Switch the cost queries over to real view history
+
+`get_daily_revenue_trend` still attributes a clip's whole playback cost to its publish
+date, and `/storage` still defines stale as "published 90+ days ago with zero lifetime
+views". Both were left alone deliberately: switching today would read from an empty
+history and zero out playback cost.
+
+Once ~30 days have accumulated in `feed_post_view_daily`:
+
+- `get_daily_revenue_trend` → `views_delta × 0.003` on the day the views happened
+- `/storage` stale → "no `views_delta > 0` in 90 days", which is the real question
+- creator detail can gain a per-clip sparkline
+
+`/help` currently documents the interim state.
+
+### Tier drop warning has never fired
+
+The rule is correct but no creator has previous-month stars, so there is nothing to drop
+from. It stays disabled until there is a month of gift history to compare against.
+
+### Surface delivery status on `/alerts`
+
+`alert_events.details_json.delivery` records per-channel outcome and the Resend message
+id. The history table does not show it yet, so a silently failed Telegram send is
+invisible in the UI.
 
 ---
 

@@ -2444,6 +2444,20 @@ export type Database = {
         }
         Returns: Json
       }
+      evaluate_alert_rules: {
+        Args: never
+        Returns: {
+          channels: string[]
+          creator_id: string
+          details: Json
+          display_name: string
+          event_id: string
+          handle: string
+          rule_id: string
+          rule_name: string
+          severity: string
+        }[]
+      }
       expire_star_batches: { Args: never; Returns: Json }
       fetch_admin_notification_email: { Args: never; Returns: string }
       fetch_star_stats_email: { Args: never; Returns: string }
@@ -2658,6 +2672,7 @@ export type Database = {
         Args: { p_overlay_key: string; p_session_id: string }
         Returns: string
       }
+      run_alert_rules: { Args: never; Returns: undefined }
       run_live_watchdog: { Args: never; Returns: undefined }
       run_star_expiration_cycle: { Args: never; Returns: Json }
       search_customer_for_credit: {

@@ -30,5 +30,6 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "comment": "supabase/functions is Deno, not Next: it resolves https: imports and Deno globals that this tsconfig cannot see. It is type-checked by the Supabase deploy, not here.",
+  "exclude": ["node_modules", "supabase/functions"]
 }
