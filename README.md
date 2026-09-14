@@ -27,8 +27,9 @@ Only `profiles.role = 'super_admin'` gets past `/login`.
 
 Three layers, deliberately:
 
-1. **Middleware** (`src/middleware.ts`) — redirects unauthenticated or non-admin
-   traffic. This is a UX redirect, not a security boundary.
+1. **Proxy** (`src/proxy.ts`) — redirects unauthenticated or non-admin traffic.
+   This is a UX redirect, not a security boundary. Next 16 renamed the `middleware`
+   file convention to `proxy`; the runtime is Node, not edge.
 2. **Dashboard layout** — re-verifies the session server-side before rendering any
    financial figure.
 3. **Server actions** — `requireSuperAdmin()` proves the caller's role against their
@@ -114,8 +115,6 @@ via a proxied Cloudflare CNAME to `cname.vercel-dns.com`.
 - Alert delivery: a scheduled `run_alert_rules` Edge Function to evaluate rules, write
   `alert_events` and deliver via Telegram/email. Rules are stored and editable now, but
   nothing evaluates them yet.
-- `src/middleware.ts` triggers a Next 16 deprecation warning in favour of the new
-  `proxy.ts` convention. It still works; migrate when convenient.
 - Playback cost cannot be split by day — `feed_posts.view_count` is a running total
   with no history. The daily trend attributes it to each clip's publish date.
 - Desktop-first: no layout work below 768px.

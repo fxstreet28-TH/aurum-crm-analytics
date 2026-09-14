@@ -43,7 +43,7 @@ export function LoginForm() {
       return
     }
 
-    // The role gate lives in middleware; confirm it here so a non-admin sees a
+    // The role gate lives in the proxy; confirm it here so a non-admin sees a
     // useful message instead of being bounced straight back to this form.
     const { data: profile } = await supabase
       .from('profiles')

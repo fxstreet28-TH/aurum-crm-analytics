@@ -1,9 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { checkSession } from '@/lib/supabase/middleware'
+import { checkSession } from '@/lib/supabase/proxy'
 
 const LOGIN_PATH = '/login'
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { response, userId, isSuperAdmin } = await checkSession(request)
   const { pathname, search } = request.nextUrl
 
