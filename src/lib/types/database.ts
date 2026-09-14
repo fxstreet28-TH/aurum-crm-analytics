@@ -688,6 +688,48 @@ export type Database = {
         }
         Relationships: []
       }
+      feed_post_view_daily: {
+        Row: {
+          captured_at: string
+          creator_id: string
+          day: string
+          post_id: string
+          views_delta: number
+          views_total: number
+        }
+        Insert: {
+          captured_at?: string
+          creator_id: string
+          day: string
+          post_id: string
+          views_delta: number
+          views_total: number
+        }
+        Update: {
+          captured_at?: string
+          creator_id?: string
+          day?: string
+          post_id?: string
+          views_delta?: number
+          views_total?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "feed_post_view_daily_creator_id_fkey"
+            columns: ["creator_id"]
+            isOneToOne: false
+            referencedRelation: "creators"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "feed_post_view_daily_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "feed_posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       feed_posts: {
         Row: {
           access_level: string
@@ -2447,6 +2489,15 @@ export type Database = {
         Args: { p_regenerate?: boolean }
         Returns: string
       }
+      get_creator_view_trend: {
+        Args: { p_creator_id: string; p_days?: number }
+        Returns: {
+          day: string
+          has_history: boolean
+          views: number
+          views_total: number
+        }[]
+      }
       get_daily_revenue_trend: {
         Args: { p_days?: number }
         Returns: {
@@ -2657,6 +2708,7 @@ export type Database = {
         Args: { p_current: number; p_session_id: string }
         Returns: undefined
       }
+      snapshot_feed_post_views: { Args: { p_day?: string }; Returns: number }
       touch_live_heartbeat: { Args: { p_session_id: string }; Returns: string }
     }
     Enums: {

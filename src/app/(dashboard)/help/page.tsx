@@ -79,9 +79,13 @@ export default function HelpPage() {
           </p>
           <p>
             <strong className="text-ink">Playback</strong> is ฿ 0.003 per recorded view.
-            Because <code className="text-accent-light">feed_posts</code> stores only a
-            running total, playback cost cannot be split by day precisely — the daily trend
-            attributes it to each clip&apos;s publish date.
+            <code className="text-accent-light">feed_posts</code> stores only a running
+            total, so the daily trend still attributes playback cost to each clip&apos;s
+            publish date. A nightly snapshot into{' '}
+            <code className="text-accent-light">feed_post_view_daily</code> now records
+            per-day movement; once enough history has accumulated the trend will switch to
+            charging views on the day they happened. History starts the day that table
+            shipped and cannot be reconstructed for earlier days.
           </p>
           <p>
             <strong className="text-ink">Chat</strong> is ฿ 0 — Supabase Realtime is within

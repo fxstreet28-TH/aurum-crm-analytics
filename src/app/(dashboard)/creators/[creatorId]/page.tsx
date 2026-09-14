@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Clock,
   Coins,
+  Eye,
   Film,
   HardDrive,
   TriangleAlert,
@@ -13,6 +14,7 @@ import {
   getCreatorClips,
   getCreatorProfile,
   getCreatorSessions,
+  getCreatorViewTrend,
 } from '@/lib/queries/creators'
 import { getCreatorCostBreakdown, getCreatorTier } from '@/lib/queries/overview'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -33,6 +35,7 @@ import { ThbAmount } from '@/components/shared/ThbAmount'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { KpiCard } from '@/components/dashboard/KpiCard'
 import { CostBreakdownBar } from '@/components/dashboard/CostBreakdownBar'
+import { ViewTrendChart } from '@/components/dashboard/ViewTrendChart'
 import { ExclusionToggle } from '@/components/dashboard/ExclusionToggle'
 import {
   date,
@@ -53,12 +56,16 @@ export default async function CreatorDetailPage({ params }: Props) {
   const profile = await getCreatorProfile(creatorId)
   if (!profile) notFound()
 
-  const [tier, cost, clips, sessions] = await Promise.all([
+  const [tier, cost, clips, sessions, viewTrend] = await Promise.all([
     getCreatorTier(creatorId),
     getCreatorCostBreakdown(creatorId),
     getCreatorClips(creatorId, 10),
     getCreatorSessions(creatorId, 10),
+    getCreatorViewTrend(creatorId, 30),
   ])
+
+  // Days before the snapshot table shipped were never captured and plot as zero.
+  const firstRecordedDay = viewTrend.points.find((point) => point.hasHistory)?.day ?? null
 
   const commission = Number(tier.platform_thb)
   const totalCost = Number(cost.total_cost_thb)
@@ -195,6 +202,38 @@ export default async function CreatorDetailPage({ params }: Props) {
         <CardContent>
           <CostBreakdownBar breakdown={cost} />
         </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Views trend</CardTitle>
+          <CardDescription>
+            Daily views across this creator&apos;s ready clips, last 30 days
+          </CardDescription>
+        </CardHeader>
+        {viewTrend.capturedDays > 0 ? (
+          <CardContent>
+            <ViewTrendChart data={viewTrend.points} />
+            <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-ink-faint">
+              <span>
+                {number(viewTrend.totalViews)} views over {viewTrend.capturedDays}{' '}
+                recorded day{viewTrend.capturedDays === 1 ? '' : 's'}
+              </span>
+              {viewTrend.capturedDays < viewTrend.points.length && firstRecordedDay && (
+                <span>
+                  History starts {date(firstRecordedDay)} — earlier days were never
+                  recorded, not watched zero times
+                </span>
+              )}
+            </div>
+          </CardContent>
+        ) : (
+          <EmptyState
+            icon={Eye}
+            title="No view history yet"
+            description="The daily snapshot has not run for this creator's clips yet. The first row lands on the next nightly capture."
+          />
+        )}
       </Card>
 
       <Card>
