@@ -231,3 +231,50 @@ export async function listAllCreatorsForSettings(): Promise<
     excluded: row.excluded_from_analytics,
   }))
 }
+
+export type ViewTrendPoint = {
+  day: string
+  views: number
+  viewsTotal: number
+  hasHistory: boolean
+}
+
+export type CreatorViewTrend = {
+  points: ViewTrendPoint[]
+  /** Days actually captured so far — the series is short until history accumulates. */
+  capturedDays: number
+  totalViews: number
+}
+
+/**
+ * Daily view movement for one creator, from feed_post_view_daily.
+ *
+ * History only exists from the day the snapshot table shipped, so `capturedDays`
+ * is what the UI should caveat against — a flat line over days with no snapshot
+ * means "not recorded", not "nobody watched".
+ */
+export async function getCreatorViewTrend(
+  creatorId: string,
+  days = 30,
+): Promise<CreatorViewTrend> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase.rpc('get_creator_view_trend', {
+    p_creator_id: creatorId,
+    p_days: days,
+  })
+
+  if (error) throw new Error(`getCreatorViewTrend failed: ${error.message}`)
+
+  const points: ViewTrendPoint[] = (data ?? []).map((row) => ({
+    day: row.day,
+    views: Number(row.views ?? 0),
+    viewsTotal: Number(row.views_total ?? 0),
+    hasHistory: Boolean(row.has_history),
+  }))
+
+  return {
+    points,
+    capturedDays: points.filter((p) => p.hasHistory).length,
+    totalViews: points.reduce((sum, p) => sum + p.views, 0),
+  }
+}
